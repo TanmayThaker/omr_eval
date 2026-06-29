@@ -7,8 +7,9 @@ import os
 import tempfile
 import uuid
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Security, Depends
 from fastapi.responses import Response, FileResponse, JSONResponse
+from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -21,7 +22,14 @@ ALLOWED_EXT = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "20")) * 1024 * 1024
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
-app = FastAPI(title="OMR Evaluation API", version="1.0")
+_API_KEY = os.getenv("OMR_API_KEY")  # unset → auth disabled (dev mode)
+_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+async def _require_key(key: str = Security(_key_header)):
+    if _API_KEY and key != _API_KEY:
+        raise HTTPException(401, "Invalid or missing X-API-Key header")
+
+app = FastAPI(title="OMR Evaluation API", version="1.0", dependencies=[Depends(_require_key)])
 
 # Origins can be overridden via ALLOWED_ORIGINS env var (comma-separated).
 _raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
