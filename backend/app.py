@@ -1,13 +1,14 @@
 """FastAPI server for OMR extraction + QC."""
 from __future__ import annotations
 from pathlib import Path
+from urllib.parse import urlsplit
 import io
 import csv
 import os
 import tempfile
 import uuid
 
-from fastapi import APIRouter, FastAPI, UploadFile, File, HTTPException, Security, Depends
+from fastapi import APIRouter, FastAPI, UploadFile, File, HTTPException, Security, Depends, Request
 from fastapi.responses import Response, FileResponse, JSONResponse
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
@@ -26,9 +27,30 @@ _API_KEY = os.getenv("OMR_API_KEY")  # unset → auth disabled (dev mode)
 _key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
-async def _require_key(key: str = Security(_key_header)):
-    if _API_KEY and key != _API_KEY:
-        raise HTTPException(401, "Invalid or missing X-API-Key header")
+def _is_trusted_browser(request: Request) -> bool:
+    """True for requests originating from the app's own UI: same-origin, or an
+    Origin in the configured CORS allow-list (covers the Vite dev server). The UI
+    is served from this same origin on a (private) Space, so it needs no key — and
+    plain <img>/<a> GETs can't send a header anyway. Programmatic callers (curl,
+    scripts) send no Origin/Referer and fall through to API-key auth below."""
+    origin = request.headers.get("origin")
+    if origin and origin in _origins:
+        return True
+    host = request.headers.get("host", "")
+    for src in (origin, request.headers.get("referer")):
+        if src and host and urlsplit(src).netloc == host:
+            return True
+    return False
+
+
+async def _require_key(request: Request, key: str = Security(_key_header)):
+    if not _API_KEY:
+        return                              # auth disabled (dev mode)
+    if key == _API_KEY:
+        return                              # programmatic caller with a valid key
+    if _is_trusted_browser(request):
+        return                              # same-origin UI on a private Space
+    raise HTTPException(401, "Invalid or missing X-API-Key header")
 
 
 app = FastAPI(title="OMR Evaluation API", version="1.0")
@@ -163,13 +185,6 @@ async def process(file: UploadFile = File(...)):
 
 
 app.include_router(api)
-
-
-@app.get("/api/config")
-def config():
-    """Public endpoint: returns the API key so the browser UI can authenticate.
-    Safe because the HF Space itself is private — only authorised users reach this."""
-    return {"apiKey": _API_KEY or ""}
 
 
 # --- helpers ---
