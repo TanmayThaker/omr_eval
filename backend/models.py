@@ -38,4 +38,5 @@ class Correction(BaseModel):
 
 class CorrectRequest(BaseModel):
     roll_number: str | None = None
+    series: str | None = None
     corrections: list[Correction] = []

@@ -11,10 +11,13 @@ export default function App() {
   const [view, setView] = useState('overlay')
   const [selectedQ, setSelectedQ] = useState(null)
   const [rollDraft, setRollDraft] = useState('')
+  const [seriesDraft, setSeriesDraft] = useState('')
   const [pending, setPending] = useState({})   // question -> answer (unsaved)
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => { if (result) setRollDraft(result.roll_number) }, [result?.session_id])
+  useEffect(() => {
+    if (result) { setRollDraft(result.roll_number); setSeriesDraft(result.series || '') }
+  }, [result?.session_id])
 
   // Merge unsaved edits into the displayed answers.
   const answers = useMemo(() => {
@@ -39,7 +42,8 @@ export default function App() {
   }, [answers])
 
   const dirty = Object.keys(pending).length > 0 ||
-    (result && rollDraft !== result.roll_number)
+    (result && rollDraft !== result.roll_number) ||
+    (result && seriesDraft !== (result.series || ''))
 
   async function handleFile(file) {
     setLoading(true); setError(null); setSelectedQ(null); setPending({})
@@ -70,7 +74,7 @@ export default function App() {
       const corrections = Object.entries(pending).map(([q, answer]) =>
         ({ question: Number(q), answer }))
       const r = await api.saveCorrections(result.session_id,
-        { roll_number: rollDraft, corrections })
+        { roll_number: rollDraft, series: seriesDraft, corrections })
       setResult(r); setPending({})
     } catch (e) {
       setError(e.message)
@@ -90,6 +94,15 @@ export default function App() {
               <input value={rollDraft} onChange={(e) => setRollDraft(e.target.value)} />
               <span className="conf-pill" title="detection confidence">
                 {Math.round(result.roll_confidence * 100)}%
+              </span>
+            </label>
+            <label className="roll">
+              Series
+              <input className="series-input" maxLength={2}
+                     value={seriesDraft}
+                     onChange={(e) => setSeriesDraft(e.target.value.toUpperCase())} />
+              <span className="conf-pill" title="detection confidence">
+                {Math.round((result.series_confidence || 0) * 100)}%
               </span>
             </label>
             <div className="badges">
@@ -113,21 +126,11 @@ export default function App() {
         )}
       </header>
 
-      {result && (result.orientation !== '0' || result.inverted ||
-                  Math.abs(result.skew_applied_deg) >= 0.25 ||
-                  (result.resolution_scale && result.resolution_scale !== 1)) && (
-        <div className="infobar">
-          🛠 Auto-corrected:
-          {result.orientation !== '0' && <span> orientation ({result.orientation})</span>}
-          {result.inverted && <span> · inverted colors</span>}
-          {Math.abs(result.skew_applied_deg) >= 0.25 &&
-            <span> · skew {result.skew_applied_deg}°</span>}
-          {result.resolution_scale !== 1 &&
-            <span> · rescaled ×{result.resolution_scale}</span>}
+      {result?.messages?.length > 0 && (
+        <div className={result.needs_review ? 'warnbar' : 'infobar'}>
+          {result.needs_review ? '⚠ Needs review — ' : '🛠 '}
+          {result.messages.join('  ·  ')}
         </div>
-      )}
-      {result?.warnings?.length > 0 && (
-        <div className="warnbar">⚠ {result.warnings.join(' · ')}</div>
       )}
       {error && <div className="errorbar">⚠ {error}</div>}
 

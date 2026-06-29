@@ -78,7 +78,8 @@ def get_overlay(session_id: str):
 def correct(session_id: str, req: CorrectRequest):
     sess = _require(session_id)
     corrections = {c.question: c.answer.upper() for c in req.corrections}
-    store.apply_corrections(sess, req.roll_number, corrections)
+    series = req.series.upper() if req.series else None
+    store.apply_corrections(sess, req.roll_number, corrections, series)
     return store.result_dict(sess)
 
 
@@ -89,6 +90,7 @@ def get_csv(session_id: str):
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["roll_number", data["roll_number"]])
+    w.writerow(["series", data.get("series") or ""])
     w.writerow([])
     w.writerow(["question", "answer", "confidence", "corrected"])
     for a in data["answers"]:
@@ -101,10 +103,17 @@ def get_csv(session_id: str):
 
 @app.get("/api/result/{session_id}/json")
 def get_json_download(session_id: str):
+    """Compact export: {"roll_number", "series", "responses": {...}}."""
     sess = _require(session_id)
     fname = f"omr_{session_id}.json"
-    return JSONResponse(store.result_dict(sess),
+    return JSONResponse(store.compact_dict(sess),
                         headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@app.get("/api/result/{session_id}/full")
+def get_full_json(session_id: str):
+    """Full session JSON (geometry, confidence, quality) for tooling."""
+    return store.result_dict(_require(session_id))
 
 
 # --- helpers ---

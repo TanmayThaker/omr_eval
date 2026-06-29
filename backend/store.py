@@ -25,9 +25,10 @@ class Session:
     filename: str
     cfg: OMRConfig
     result: ProcessResult
-    # corrections: question -> answer; roll override
+    # corrections: question -> answer; roll/series overrides
     answer_overrides: dict[int, str] = field(default_factory=dict)
     roll_override: str | None = None
+    series_override: str | None = None
 
     @property
     def dir(self) -> Path:
@@ -36,6 +37,9 @@ class Session:
     # --- effective (corrected) views ---
     def effective_roll(self) -> str:
         return self.roll_override if self.roll_override is not None else self.result.roll_number
+
+    def effective_series(self) -> str:
+        return self.series_override if self.series_override is not None else self.result.series
 
     def effective_answer(self, question: int) -> str:
         if question in self.answer_overrides:
@@ -66,12 +70,28 @@ class SessionStore:
         return self._sessions.get(session_id)
 
     def apply_corrections(self, sess: Session, roll: str | None,
-                          corrections: dict[int, str]) -> None:
+                          corrections: dict[int, str], series: str | None = None) -> None:
         with self._lock:
             if roll is not None:
                 sess.roll_override = roll
+            if series is not None:
+                sess.series_override = series
             sess.answer_overrides.update(corrections)
         self._write_json(sess)
+
+    def compact_dict(self, sess: Session) -> dict:
+        """Requested export shape using corrected values, plus actionable feedback:
+        {"roll_number", "series", "responses", "needs_review", "messages", "review"}.
+        Reflects manual corrections (corrected items are treated as verified)."""
+        roll = sess.effective_roll()
+        out = {
+            "roll_number": int(roll) if roll.isdigit() else roll,
+            "series": sess.effective_series() or None,
+            "responses": {str(a.question): sess.effective_answer(a.question)
+                          for a in sess.result.answers},
+        }
+        out.update(self._review(sess))
+        return out
 
     # --- serialization ---
     def result_dict(self, sess: Session) -> dict:
@@ -107,6 +127,8 @@ class SessionStore:
             "filename": sess.filename,
             "roll_number": sess.effective_roll(),
             "roll_confidence": res.roll_confidence,
+            "series": res.series or None,
+            "series_confidence": res.series_confidence,
             "skew_applied_deg": round(res.skew_applied, 3),
             "orientation": res.orientation,
             "inverted": res.inverted,
@@ -121,7 +143,16 @@ class SessionStore:
             "bubble_half_w": cfg.fill_half_w,
             "bubble_half_h": cfg.fill_half_h,
             "options": list(cfg.option_labels),
+            **self._review(sess),
         }
+
+    def _review(self, sess: Session) -> dict:
+        from omr.pipeline import build_review
+        res = sess.result
+        view = [(a.question, sess.effective_answer(a.question), a.confidence,
+                 a.question in sess.answer_overrides) for a in res.answers]
+        return build_review(view, sess.effective_roll(), res.roll_confidence,
+                            sess.effective_series(), res.series_confidence, res)
 
     def _write_json(self, sess: Session) -> None:
         with open(sess.dir / "result.json", "w") as f:

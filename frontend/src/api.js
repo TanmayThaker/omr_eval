@@ -9,11 +9,11 @@ export async function extract(file) {
   return r.json()
 }
 
-export async function saveCorrections(sessionId, { roll_number, corrections }) {
+export async function saveCorrections(sessionId, { roll_number, series, corrections }) {
   const r = await fetch(`${BASE}/api/correct/${sessionId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ roll_number, corrections }),
+    body: JSON.stringify({ roll_number, series, corrections }),
   })
   if (!r.ok) throw new Error(`Save failed (${r.status})`)
   return r.json()

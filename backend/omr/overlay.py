@@ -45,4 +45,9 @@ def draw_overlay(gray: np.ndarray, geom: GridGeometry, results: list[QuestionRes
         for cy in geom.roll_rows:
             cv2.rectangle(img, (int(cx - hw), int(cy - hh)),
                           (int(cx + hw), int(cy + hh)), TEAL, 1)
+    # series column boxes
+    if geom.series_col is not None:
+        for cy in geom.series_rows:
+            cv2.rectangle(img, (int(geom.series_col - hw), int(cy - hh)),
+                          (int(geom.series_col + hw), int(cy + hh)), TEAL, 1)
     return img

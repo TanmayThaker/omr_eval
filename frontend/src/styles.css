@@ -24,6 +24,7 @@ body {
   color: var(--text); border-radius: 6px; padding: 5px 8px; font-family: ui-monospace, monospace;
   letter-spacing: 1px;
 }
+.roll input.series-input { width: 40px; text-align: center; }
 .conf-pill { font-size: 11px; color: var(--muted); background: var(--panel2);
   padding: 2px 6px; border-radius: 10px; }
 .badges { display: flex; gap: 6px; }

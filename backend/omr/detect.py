@@ -82,6 +82,22 @@ def decode_answers(bw: np.ndarray, geom: GridGeometry, cfg: OMRConfig) -> list[Q
     return results
 
 
+def decode_series(bw: np.ndarray, geom: GridGeometry, cfg: OMRConfig) -> tuple[str, float]:
+    """Decode the paper series: the filled option row maps to A, B, C, ...
+    Returns (letter, confidence); ("", 0.0) if the column wasn't found and
+    ("?", low) if no option is clearly filled."""
+    if geom.series_col is None or len(geom.series_rows) < 2:
+        return "", 0.0
+    fills = [_fill_ratio(bw, geom.series_col, cy, cfg) for cy in geom.series_rows]
+    order = np.argsort(fills)[::-1]
+    top, sec = order[0], order[1]
+    if fills[top] < cfg.fill_threshold:
+        return "?", 0.0
+    letter = chr(ord("A") + int(top)) if top < 26 else "?"
+    conf = min(1.0, (fills[top] - fills[sec]) / max(cfg.fill_margin, 1e-6))
+    return letter, round(conf, 3)
+
+
 def decode_roll(bw: np.ndarray, geom: GridGeometry, cfg: OMRConfig) -> tuple[str, float]:
     """Decode the roll-number: per column pick the filled 0-9 row."""
     if not geom.roll_cols or len(geom.roll_rows) < 2:

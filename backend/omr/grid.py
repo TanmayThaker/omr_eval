@@ -33,6 +33,9 @@ class GridGeometry:
     # ID fields (optional; empty list if not found)
     roll_cols: list[float] = field(default_factory=list)
     roll_rows: list[float] = field(default_factory=list)
+    # paper-series (booklet) column: single x with N option rows (A, B, C, ...)
+    series_col: float | None = None
+    series_rows: list[float] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -154,6 +157,8 @@ def detect_grid(bw: np.ndarray, cfg: OMRConfig) -> GridGeometry:
 
     answer_top = min(r[0] for r in block_rows) if block_rows else 0.30 * H
     roll_cols, roll_rows = _detect_roll(cands, cfg, H, W, bw_med, answer_top, warnings)
+    series_col, series_rows = _detect_series(cands, cfg, H, W, bw_med,
+                                             roll_cols, answer_top)
 
     return GridGeometry(
         block_cols=blocks,
@@ -162,6 +167,8 @@ def detect_grid(bw: np.ndarray, cfg: OMRConfig) -> GridGeometry:
         bubble_h=bh_med,
         roll_cols=roll_cols,
         roll_rows=roll_rows,
+        series_col=series_col,
+        series_rows=series_rows,
         warnings=warnings,
     )
 
@@ -185,8 +192,44 @@ def _detect_roll(cands, cfg, H, W, bw_med, answer_top, warnings):
         return cols, []
     sel = [c for c in top if any(abs(c[0] - cx) < bw_med for cx in cols)]
     rclusters = _cluster_1d([c[1] for c in sel], cfg.row_cluster_gap)
-    rows = _regular_run([float(np.mean(cl)) for cl in rclusters], cfg.roll_rows, cfg)
-    if len(rows) != cfg.roll_rows and len(rows) >= 2:
-        y0, y1 = rows[0], rows[-1]
-        rows = [y0 + (y1 - y0) * i / (cfg.roll_rows - 1) for i in range(cfg.roll_rows)]
+    # Roll bubble rows are the most densely populated clusters (~one bubble per
+    # column). Printed header digits and stray rows are far sparser, so picking
+    # the roll_rows densest clusters avoids anchoring on a spurious row — which
+    # would otherwise misalign the whole grid via the even-spacing fallback.
+    if len(rclusters) >= cfg.roll_rows:
+        dense = sorted(rclusters, key=len, reverse=True)[:cfg.roll_rows]
+        rows = sorted(float(np.mean(cl)) for cl in dense)
+    else:
+        rows = sorted(float(np.mean(cl)) for cl in rclusters)
+        if len(rows) >= 2:
+            y0, y1 = rows[0], rows[-1]
+            rows = [y0 + (y1 - y0) * i / (cfg.roll_rows - 1)
+                    for i in range(cfg.roll_rows)]
     return cols, rows
+
+
+def _detect_series(cands, cfg, H, W, bw_med, roll_cols, answer_top):
+    """Detect the paper-series (booklet) column: the first bubble column just to
+    the right of the roll grid, in the header band. Its options (A, B, C, ...)
+    run top-to-bottom; the count varies by sheet (e.g. A-H vs A-D).
+
+    Returns (series_col_x or None, sorted option-row y-centers).
+    """
+    roll_right = max(roll_cols) if roll_cols else 0.25 * W
+    band = [c for c in cands
+            if 0.04 * H < c[1] < answer_top - bw_med
+            and roll_right + 2.5 * bw_med < c[0] < 0.46 * W]
+    if not band:
+        return None, []
+    xclusters = _cluster_1d([c[0] for c in band], cfg.col_cluster_gap)
+    real = sorted((cl for cl in xclusters if len(cl) >= 4), key=lambda cl: np.mean(cl))
+    if not real:
+        return None, []
+    sx = float(np.mean(real[0]))  # leftmost real column = series
+    col = [c for c in band if abs(c[0] - sx) < bw_med]
+    rclusters = _cluster_1d([c[1] for c in col], cfg.row_cluster_gap)
+    # longest regular run = the option bubbles (drops the printed series letter)
+    rows = _regular_run([float(np.mean(cl)) for cl in rclusters], 100, cfg)
+    if len(rows) < 2:
+        return None, []
+    return sx, rows

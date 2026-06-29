@@ -1,7 +1,45 @@
 # OMR Answer-Sheet Evaluation
 
-Extracts roll number and 200 answers (5 options each) from a scanned OMR sheet
-(GN-107 family) and produces CSV/JSON plus a visual QC overlay.
+Extracts the roll number, the paper series (booklet), and 200 answers
+(5 options each) from a scanned OMR sheet (GN-107 / GN-101 family) and produces
+CSV/JSON plus a visual QC overlay.
+
+### Result JSON (compact export — `GET /api/result/{id}/json`)
+```json
+{
+  "roll_number": 101005721,
+  "series": "A",
+  "responses": {"1": "C", "2": "A", "...": "..."},
+  "needs_review": true,
+  "messages": [
+    "Grid alignment looks imperfect — please rescan/realign the sheet (flat, full page, upright) and submit again.",
+    "3 question(s) have multiple marks — verify: [10, 75, 150].",
+    "6 question(s) appear unanswered — verify: [5, 30, 60, 111, 123, 200]."
+  ],
+  "review": {
+    "roll_confidence": 1.0,
+    "series_confidence": 1.0,
+    "unanswered": [5, 30, 60, 111, 123, 200],
+    "multiple_marked": [10, 75, 150],
+    "low_confidence": [88]
+  }
+}
+```
+`roll_number` is an int when fully numeric; `series` is the filled booklet
+letter (A–H or A–D depending on the sheet); `responses` covers all 200
+questions (value is `A`–`E`, or `BLANK` / `MULTI`).
+
+**Actionable feedback** so the submitter can realign/resubmit or verify manually:
+- `needs_review` — `true` when anything needs attention (otherwise a clean pass).
+- `messages` — human-readable notes: auto-corrections applied (orientation,
+  inversion, skew, rescale), a **rescan/realign** prompt when grid alignment is
+  poor, and which fields/questions to verify.
+- `review` — exact items to check: `unanswered` (blank), `multiple_marked`,
+  `low_confidence` question numbers, plus roll/series confidence.
+
+All of this reflects **manual corrections** — once you fix a flagged item and
+save, it drops out of `review` and the messages. A clean, fully-marked sheet
+returns `needs_review: false` with no messages.
 
 ## Status
 - [x] **Milestone 1–2: OMR core, verified on the reference sheet** — 200/200 answers
@@ -87,8 +125,10 @@ bubble in the table, export CSV/JSON.
 | POST | `/api/extract` | upload PDF/image → result JSON (roll, 200 answers, per-bubble coords) |
 | GET  | `/api/scan/{id}` / `/api/overlay/{id}` | original scan / annotated QC image |
 | GET  | `/api/result/{id}` | result JSON |
-| POST | `/api/correct/{id}` | save roll/answer corrections |
-| GET  | `/api/result/{id}/csv` · `/json` | downloads |
+| POST | `/api/correct/{id}` | save roll/series/answer corrections |
+| GET  | `/api/result/{id}/json` | compact export (roll, series, responses) |
+| GET  | `/api/result/{id}/csv` | CSV (roll, series, per-question) |
+| GET  | `/api/result/{id}/full` | full session JSON (geometry, confidence, quality) |
 
 ## How it works
 Cluster-based, self-calibrating pipeline (no hard-coded pixel template), so it
@@ -101,7 +141,8 @@ tolerates scale/translation and minor skew across scans of this sheet family:
 3. **Grid detection** cluster bubble candidates into 4 blocks x 5 options x 50 rows,
    plus the 9x10 roll-number grid — `omr/grid.py`
 4. **Decode** per-bubble dark-fill ratio with a per-sheet Otsu-calibrated
-   threshold + winner/blank/multi decision and confidence — `omr/detect.py`
+   threshold + winner/blank/multi decision and confidence; also decodes the
+   roll-number grid and the paper-series column — `omr/detect.py`
 5. **Overlay** annotated QC image (green=marked, teal=locator, red=blank/multi)
    — `omr/overlay.py`
 6. **Pipeline** orchestration, quality/warnings, JSON/CSV/PNG output — `omr/pipeline.py`
