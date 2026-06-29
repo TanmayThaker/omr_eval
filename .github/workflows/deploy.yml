@@ -24,4 +24,4 @@ jobs:
           git config user.email "tanmaythaker09@gmail.com"
           git config user.name "TanmayThaker"
           git remote add space https://TanmayThaker:$HF_TOKEN@huggingface.co/spaces/tanmayAI/omr_eval
-          git push space feature/hf-spaces-deploy:main --force
+          git push space main:main --force
