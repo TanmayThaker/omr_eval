@@ -7,7 +7,7 @@ import os
 import tempfile
 import uuid
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Security, Depends
+from fastapi import APIRouter, FastAPI, UploadFile, File, HTTPException, Security, Depends
 from fastapi.responses import Response, FileResponse, JSONResponse
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
@@ -25,11 +25,13 @@ FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 _API_KEY = os.getenv("OMR_API_KEY")  # unset → auth disabled (dev mode)
 _key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
+
 async def _require_key(key: str = Security(_key_header)):
     if _API_KEY and key != _API_KEY:
         raise HTTPException(401, "Invalid or missing X-API-Key header")
 
-app = FastAPI(title="OMR Evaluation API", version="1.0", dependencies=[Depends(_require_key)])
+
+app = FastAPI(title="OMR Evaluation API", version="1.0")
 
 # Origins can be overridden via ALLOWED_ORIGINS env var (comma-separated).
 _raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
@@ -41,13 +43,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# All /api/* routes share the key guard via the router dependency.
+api = APIRouter(prefix="/api", dependencies=[Depends(_require_key)])
 
-@app.get("/api/health")
+
+@api.get("/health")
 def health():
     return {"status": "ok"}
 
 
-@app.post("/api/extract")
+@api.post("/extract")
 async def extract(file: UploadFile = File(...)):
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_EXT:
@@ -66,32 +71,32 @@ async def extract(file: UploadFile = File(...)):
     cfg = OMRConfig()
     try:
         result = process_document(str(src), cfg)
-    except Exception as e:  # surface processing failures cleanly
+    except Exception as e:
         raise HTTPException(422, f"OMR processing failed: {e}")
 
     sess = store.create(session_id, file.filename or src.name, cfg, result)
     return store.result_dict(sess)
 
 
-@app.get("/api/result/{session_id}")
+@api.get("/result/{session_id}")
 def get_result(session_id: str):
     sess = _require(session_id)
     return store.result_dict(sess)
 
 
-@app.get("/api/scan/{session_id}")
+@api.get("/scan/{session_id}")
 def get_scan(session_id: str):
     sess = _require(session_id)
     return FileResponse(sess.dir / "scan.png", media_type="image/png")
 
 
-@app.get("/api/overlay/{session_id}")
+@api.get("/overlay/{session_id}")
 def get_overlay(session_id: str):
     sess = _require(session_id)
     return FileResponse(sess.dir / "overlay.png", media_type="image/png")
 
 
-@app.post("/api/correct/{session_id}")
+@api.post("/correct/{session_id}")
 def correct(session_id: str, req: CorrectRequest):
     sess = _require(session_id)
     corrections = {c.question: c.answer.upper() for c in req.corrections}
@@ -100,7 +105,7 @@ def correct(session_id: str, req: CorrectRequest):
     return store.result_dict(sess)
 
 
-@app.get("/api/result/{session_id}/csv")
+@api.get("/result/{session_id}/csv")
 def get_csv(session_id: str):
     sess = _require(session_id)
     data = store.result_dict(sess)
@@ -118,7 +123,7 @@ def get_csv(session_id: str):
                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
-@app.get("/api/result/{session_id}/json")
+@api.get("/result/{session_id}/json")
 def get_json_download(session_id: str):
     """Compact export: {"roll_number", "series", "responses": {...}}."""
     sess = _require(session_id)
@@ -127,25 +132,23 @@ def get_json_download(session_id: str):
                         headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
-@app.get("/api/result/{session_id}/full")
+@api.get("/result/{session_id}/full")
 def get_full_json(session_id: str):
     """Full session JSON (geometry, confidence, quality) for tooling."""
     return store.result_dict(_require(session_id))
 
 
-@app.post("/api/process")
+@api.post("/process")
 async def process(file: UploadFile = File(...)):
     """Stateless OMR: PDF in → structured JSON out. No session, no disk storage."""
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_EXT:
         raise HTTPException(400, f"Unsupported file type {ext!r}. "
                                  f"Allowed: {sorted(ALLOWED_EXT)}")
-    # Enforce size limit before doing any processing.
     content = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, f"File too large — maximum is {MAX_UPLOAD_BYTES // (1024*1024)} MB.")
 
-    # PyMuPDF requires a real filesystem path; temp file is deleted immediately after.
     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
         tmp.write(content)
         tmp_path = tmp.name
@@ -157,6 +160,16 @@ async def process(file: UploadFile = File(...)):
     finally:
         os.unlink(tmp_path)
     return result.compact_dict()
+
+
+app.include_router(api)
+
+
+@app.get("/api/config")
+def config():
+    """Public endpoint: returns the API key so the browser UI can authenticate.
+    Safe because the HF Space itself is private — only authorised users reach this."""
+    return {"apiKey": _API_KEY or ""}
 
 
 # --- helpers ---
