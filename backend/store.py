@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from dataclasses import dataclass, field
 import json
+import os
 import threading
 import cv2
 
@@ -16,7 +17,8 @@ from omr.config import OMRConfig
 from omr.pipeline import ProcessResult
 from omr.overlay import draw_overlay
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "sessions"
+DATA_DIR = Path(os.getenv("DATA_DIR",
+    str(Path(__file__).resolve().parent.parent / "data" / "sessions")))
 
 
 @dataclass

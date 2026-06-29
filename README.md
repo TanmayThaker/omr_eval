@@ -1,3 +1,13 @@
+
+---
+title: OMR Eval
+emoji: 📄
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+---
+
 # OMR Answer-Sheet Evaluation
 
 Extracts the roll number, the paper series (booklet), and 200 answers
