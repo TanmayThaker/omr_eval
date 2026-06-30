@@ -107,37 +107,39 @@ python scripts/verify_reference.py                 # clean-sheet sanity + artifa
 ```
 
 ## Run the app
-
-**Quickest (Windows):** double-click `run.bat` — it builds the UI if needed and
-serves everything at http://127.0.0.1:8000.
-
-**Manual:**
 ```
 # 1. backend deps (conda `all` env)
 pip install -r requirements.txt
 
-# 2. build the UI once
-cd frontend && npm install && npm run build && cd ..
-
-# 3. serve (UI + API on one origin)
+# 2. serve the API
 cd backend && python -m uvicorn app:app --host 127.0.0.1 --port 8000
 ```
-Open http://127.0.0.1:8000 → drop a PDF/image → review the overlay, fix any
-bubble in the table, export CSV/JSON.
-
-**UI dev mode (hot reload):** run the backend on :8000, then
-`cd frontend && npm run dev` (Vite on :5173 proxies `/api` to :8000).
+```
+# extract: PDF/image in → JSON out
+curl -s -H "X-API-Key: $OMR_API_KEY" -F "file=@sheet.pdf" \
+     http://127.0.0.1:8000/api/process
+```
 
 ## API
-| Method | Endpoint | Purpose |
-|---|---|---|
-| POST | `/api/extract` | upload PDF/image → result JSON (roll, 200 answers, per-bubble coords) |
-| GET  | `/api/scan/{id}` / `/api/overlay/{id}` | original scan / annotated QC image |
-| GET  | `/api/result/{id}` | result JSON |
-| POST | `/api/correct/{id}` | save roll/series/answer corrections |
-| GET  | `/api/result/{id}/json` | compact export (roll, series, responses) |
-| GET  | `/api/result/{id}/csv` | CSV (roll, series, per-question) |
-| GET  | `/api/result/{id}/full` | full session JSON (geometry, confidence, quality) |
+Stateless: a request renders to a temp file that is deleted before the response
+returns. Nothing is persisted, so the service holds no per-request state.
+
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| GET  | `/api/health` | none | liveness check (exposes nothing) |
+| POST | `/api/process` | `X-API-Key` | upload PDF/image → result JSON (roll, series, 200 responses, review feedback) |
+
+**Access control (fail-closed).** Set `OMR_API_KEYS` to a comma-separated list of
+keys — one per authorized user, so any single user can be revoked without
+affecting the others. Callers send their key as the `X-API-Key` header; keys are
+compared in constant time. **If `OMR_API_KEYS` is unset the API is locked** (every
+`/api` request returns `503`) — it never serves traffic open. For local dev only,
+`OMR_AUTH_DISABLED=1` bypasses auth.
+
+**Performance / robustness.** The CPU-bound pipeline runs in a bounded thread pool,
+so requests don't block each other and a burst can't exhaust memory. Tune with
+`WEB_CONCURRENCY` (worker processes) and `OMR_MAX_CONCURRENCY` (concurrent jobs per
+worker). See `.env.example` for all settings.
 
 ## How it works
 Cluster-based, self-calibrating pipeline (no hard-coded pixel template), so it

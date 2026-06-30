@@ -1,12 +1,4 @@
-# Stage 1: Build the React frontend
-FROM node:20-slim AS frontend-builder
-WORKDIR /frontend
-COPY frontend/package*.json ./
-RUN npm ci
-COPY frontend/ ./
-RUN npm run build
-
-# Stage 2: Python backend + built frontend
+# Stateless OMR extraction API (no frontend, no persistence)
 FROM python:3.11-slim
 
 # libglib2.0-0 and libgomp1 are required by opencv-python-headless
@@ -20,13 +12,14 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ ./backend/
-COPY --from=frontend-builder /frontend/dist ./frontend/dist
-RUN mkdir -p /app/data/sessions
 
 # WORKDIR must be backend/ so Python imports resolve correctly:
-# "from omr.config import OMRConfig", "from store import store", etc.
+# "from omr.config import OMRConfig", etc.
 WORKDIR /app/backend
 ENV PORT=7860
 EXPOSE 7860
 
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT}"]
+# WEB_CONCURRENCY = OS processes (true multi-core); OMR_MAX_CONCURRENCY (read in
+# app.py) bounds in-process threaded jobs per worker. Defaults: 1 worker, and
+# in-process concurrency = CPU count. Set OMR_API_KEYS to enable access.
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT} --workers ${WEB_CONCURRENCY:-1}"]
